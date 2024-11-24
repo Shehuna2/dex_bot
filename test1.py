@@ -5,6 +5,8 @@ from itertools import permutations
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from binance import ThreadedWebsocketManager
+from config import PROFIT_THRESHOLD, INITIAL_TRADE_AMOUNT, RETRY_INTERVAL
+
 
 # Binance API setup
 API_KEY = os.getenv('BINANCE_API_KEY')
@@ -96,20 +98,23 @@ def adjust_quantity(symbol, quantity):
         raise
 
 # Execute trades
-def execute_trades(path, rates, initial_amount=0.001):
+def execute_trades(path, rates, initial_amount=0.001, slippage_tolerance=0.01):
     try:
         logging.info(f"Executing trade for path: {path} with rates {rates}")
         base_amount = initial_amount
         for i, pair in enumerate(path):
             rate = rates[i]
 
-            # Adjust quantity to meet Binance requirements
-            quantity = adjust_quantity(pair, base_amount / rate)
+            # Adjust for slippage
+            expected_rate = client.get_symbol_ticker(symbol=pair)['price']
+            if abs((float(expected_rate) - rate) / rate) > slippage_tolerance:
+                logging.warning(f"Slippage exceeded for {pair}. Aborting trade.")
+                return
 
-            # Place market buy order
+            quantity = adjust_quantity(pair, base_amount / rate)
             order = client.order_market_buy(symbol=pair, quantity=quantity)
             logging.info(f"Executed {pair}: {order}")
-            base_amount = quantity * rate  # Update base amount for the next leg
+            base_amount = quantity * float(expected_rate)
         logging.info("Arbitrage trade completed successfully.")
     except BinanceAPIException as e:
         logging.error(f"Trade Error: {e}")
@@ -121,21 +126,22 @@ def arbitrage_bot():
     logging.info("Starting Binance Arbitrage Bot...")
     while True:
         try:
-            prices = get_prices()
+            prices = live_prices if live_prices else get_prices()
             if prices:
                 opportunities = find_arbitrage_opportunities(prices)
                 if opportunities:
                     logging.info("Arbitrage Opportunities Found:")
-                    for opp in opportunities[:5]:  # Show top 5 opportunities
+                    for opp in opportunities[:5]:
                         logging.info(f"Path: {opp['path']}, Profit: {opp['profit']:.2f}%")
-                        if opp['profit'] > 0.5:  # Threshold to execute trade
+                        if opp['profit'] > PROFIT_THRESHOLD:
                             execute_trades(
                                 path=opp['path'].split(" -> "),
-                                rates=opp['rates']
+                                rates=opp['rates'],
+                                initial_amount=INITIAL_TRADE_AMOUNT
                             )
                 else:
                     logging.info("No Arbitrage Opportunities.")
-            time.sleep(10)
+            time.sleep(RETRY_INTERVAL)
         except KeyboardInterrupt:
             logging.info("Bot stopped by user.")
             break
