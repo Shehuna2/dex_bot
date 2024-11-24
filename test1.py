@@ -30,6 +30,36 @@ trade_logger = logging.getLogger("trades")
 trade_logger.setLevel(logging.INFO)
 trade_logger.addHandler(logging.FileHandler("trade_history.log"))
 
+# Fetch balances for specified assets
+def get_balances(assets):
+    try:
+        balances = {}
+        for asset in assets:
+            balance = client.get_asset_balance(asset=asset)
+            if balance:
+                balances[asset] = {
+                    'free': float(balance['free']),
+                    'locked': float(balance['locked'])
+                }
+        return balances
+    except Exception as e:
+        logging.error(f"Error fetching balances: {e}")
+        return {}
+
+# Display balances in logs
+def display_balances(assets):
+    balances = get_balances(assets)
+    logging.info("Current Balances:")
+    for asset, balance in balances.items():
+        logging.info(f"{asset}: Free: {balance['free']:.8f}, Locked: {balance['locked']:.8f}")
+
+# Calculate profit (optional)
+def calculate_profit(initial_balances, current_balances):
+    profit = 0
+    for asset, initial_balance in initial_balances.items():
+        if asset in current_balances:
+            profit += (current_balances[asset]['free'] - initial_balance['free'])
+    return profit
 
 # Global variable to hold real-time prices
 live_prices = {}
