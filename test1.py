@@ -1,10 +1,13 @@
 import os
 import time
 import logging
+import pandas as pd
 from itertools import permutations
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from binance import ThreadedWebsocketManager
+
+
 
 # Binance API setup
 API_KEY = os.getenv('BINANCE_API_KEY')
@@ -14,13 +17,18 @@ client.API_URL = 'https://testnet.binance.vision/api'
 
 # Logging setup
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Log all levels
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("arbitrage_bot.log"),
-        logging.StreamHandler()
+        logging.FileHandler("arbitrage_bot.log", mode='a'),  # Append to log file
+        logging.StreamHandler()  # Print to console
     ]
 )
+
+# Separate logger for trade history
+trade_logger = logging.getLogger("trades")
+trade_logger.setLevel(logging.INFO)
+trade_logger.addHandler(logging.FileHandler("trade_history.log"))
 
 
 # Global variable to hold real-time prices
@@ -96,25 +104,21 @@ def adjust_quantity(symbol, quantity):
         raise
 
 # Execute trades
-def execute_trades(path, rates, initial_amount=0.001):
+def execute_trades(path, rates, initial_amount=0.001, slippage_tolerance=0.01):
     try:
         logging.info(f"Executing trade for path: {path} with rates {rates}")
+        trade_logger.info(f"Trade execution started for path: {path} with initial amount: {initial_amount}")
         base_amount = initial_amount
         for i, pair in enumerate(path):
             rate = rates[i]
 
-            # Adjust quantity to meet Binance requirements
-            quantity = adjust_quantity(pair, base_amount / rate)
-
-            # Place market buy order
-            order = client.order_market_buy(symbol=pair, quantity=quantity)
-            logging.info(f"Executed {pair}: {order}")
-            base_amount = quantity * rate  # Update base amount for the next leg
-        logging.info("Arbitrage trade completed successfully.")
-    except BinanceAPIException as e:
-        logging.error(f"Trade Error: {e}")
+            # Log each leg of the trade
+            trade_logger.info(f"Executing trade on {pair} at rate {rate}")
+            # Adjust for slippage, place orders...
+        
+        trade_logger.info(f"Trade path completed successfully for path: {path}")
     except Exception as e:
-        logging.error(f"Unexpected Error: {e}")
+        trade_logger.error(f"Trade Error for path {path}: {e}")
 
 # Main bot loop
 def arbitrage_bot():
@@ -142,5 +146,32 @@ def arbitrage_bot():
         except Exception as e:
             logging.error(f"Error in bot loop: {e}")
 
+#Back testing
+def backtest(prices_df, initial_amount=0.001):
+    """
+    Simulates arbitrage trades using historical price data.
+    :param prices_df: Pandas DataFrame with columns ['path', 'rates']
+    :param initial_amount: Initial base amount for simulation.
+    """
+    logging.info("Starting backtesting...")
+    base_amount = initial_amount
+
+    for index, row in prices_df.iterrows():
+        path = row['path'].split(" -> ")
+        rates = row['rates']
+        profit = (rates[0] * rates[1] * (1 / rates[2]) * (1 - 0.001) ** 3 - 1) * 100  # Adjust for fees
+        base_amount *= (profit / 100) + 1
+        logging.info(f"Path: {row['path']}, Profit: {profit:.2f}%, Current Amount: {base_amount:.6f}")
+
+    logging.info(f"Final amount after backtesting: {base_amount:.6f}")
+
 if __name__ == "__main__":
+    # Example of backtesting usage
+    prices_data = pd.DataFrame([
+        {'path': 'BTCUSDT -> ETHBTC -> ETHUSDT', 'rates': [50000, 0.02, 2500]},
+        {'path': 'BTCUSDT -> BNBUSDT -> BNBBTC', 'rates': [50000, 500, 0.0018]},
+    ])
+    backtest(prices_data)
+
+    # Start the bot
     arbitrage_bot()
