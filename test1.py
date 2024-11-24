@@ -4,6 +4,7 @@ import logging
 from itertools import permutations
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
+from binance import ThreadedWebsocketManager
 
 # Binance API setup
 API_KEY = os.getenv('BINANCE_API_KEY')
@@ -21,35 +22,36 @@ logging.basicConfig(
     ]
 )
 
-# Fetch prices and convert to a dictionary
-def get_prices():
-    for _ in range(5):  # Retry logic
-        try:
-            tickers = client.get_all_tickers()
-            return {ticker['symbol']: float(ticker['price']) for ticker in tickers}
-        except Exception as e:
-            logging.warning(f"Error fetching prices: {e}. Retrying in 5 seconds...")
-            time.sleep(5)
-    raise Exception("Failed to fetch prices after retries.")
+
+# Global variable to hold real-time prices
+live_prices = {}
+def start_price_stream():
+    def handle_message(msg):
+        if msg['e'] == '24hrTicker':
+            live_prices[msg['s']] = float(msg['c'])
+
+    twm = ThreadedWebsocketManager(api_key=API_KEY, api_secret=API_SECRET)
+    twm.start()
+    twm.start_ticker_socket(callback=handle_message)
+    logging.info("Started WebSocket for real-time prices.")
 
 # Find arbitrage opportunities dynamically
 def find_arbitrage_opportunities(prices):
+    fee_rate = 0.001  # 0.1% per trade
     opportunities = []
     trading_pairs = prices.keys()
-    
-    # Generate all possible triangular paths
+
     for path in permutations(trading_pairs, 3):
         pair_1, pair_2, pair_3 = path
 
-        # Ensure pairs are connected logically
         if pair_1[-3:] == pair_2[:3] and pair_2[-3:] == pair_3[:3] and pair_3[-3:] == pair_1[:3]:
             try:
                 rate_1 = prices[pair_1]
                 rate_2 = prices[pair_2]
                 rate_3 = 1 / prices[pair_3]
 
-                # Calculate profit percentage
-                profit = (rate_1 * rate_2 * rate_3 - 1) * 100
+                # Adjust for fees
+                profit = (rate_1 * rate_2 * rate_3 * (1 - fee_rate) ** 3 - 1) * 100
                 if profit > 0:
                     opportunities.append({
                         'path': f"{pair_1} -> {pair_2} -> {pair_3}",
