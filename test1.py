@@ -134,27 +134,45 @@ def adjust_quantity(symbol, quantity):
         raise
 
 # Execute trades
-def execute_trades(path, rates, initial_amount=0.001, slippage_tolerance=0.01):
+def execute_trades(path, rates, initial_amount=0.001):
     try:
         logging.info(f"Executing trade for path: {path} with rates {rates}")
-        trade_logger.info(f"Trade execution started for path: {path} with initial amount: {initial_amount}")
         base_amount = initial_amount
         for i, pair in enumerate(path):
             rate = rates[i]
 
-            # Log each leg of the trade
-            trade_logger.info(f"Executing trade on {pair} at rate {rate}")
-            # Adjust for slippage, place orders...
-        
-        trade_logger.info(f"Trade path completed successfully for path: {path}")
+            # Adjust quantity to meet Binance requirements
+            quantity = adjust_quantity(pair, base_amount / rate)
+
+            # Place market buy order
+            order = client.order_market_buy(symbol=pair, quantity=quantity)
+            logging.info(f"Executed {pair}: {order}")
+            base_amount = quantity * rate  # Update base amount for the next leg
+
+        logging.info("Arbitrage trade completed successfully.")
+
+        # Display updated balances for the assets involved in the path
+        display_balances(assets=[path[0][:3], path[0][-3:], path[1][-3:]])
+    except BinanceAPIException as e:
+        logging.error(f"Trade Error: {e}")
     except Exception as e:
-        trade_logger.error(f"Trade Error for path {path}: {e}")
+        logging.error(f"Unexpected Error: {e}")
+
 
 # Main bot loop
 def arbitrage_bot():
     logging.info("Starting Binance Arbitrage Bot...")
+    tracked_assets = ['BTC', 'USDT', 'ETH']  # Add the assets you want to track
+
+    # Fetch initial balances
+    initial_balances = get_balances(tracked_assets)
+
     while True:
         try:
+            # Display current balances
+            display_balances(tracked_assets)
+
+            # Fetch prices and find opportunities
             prices = get_prices()
             if prices:
                 opportunities = find_arbitrage_opportunities(prices)
@@ -167,9 +185,17 @@ def arbitrage_bot():
                                 path=opp['path'].split(" -> "),
                                 rates=opp['rates']
                             )
+
+                            # Fetch and calculate profit after trading
+                            current_balances = get_balances(tracked_assets)
+                            profit = calculate_profit(initial_balances, current_balances)
+                            logging.info(f"Profit from this cycle: {profit:.8f}")
                 else:
                     logging.info("No Arbitrage Opportunities.")
+            
+            # Delay before the next cycle
             time.sleep(10)
+
         except KeyboardInterrupt:
             logging.info("Bot stopped by user.")
             break
